@@ -1,0 +1,14 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pandas>=2.0.0
+numpy>=2.0.0
+python-dateutil>=2.9.0
+beautifulsoup4>=4.12.0
+markdownify>=0.12.0
+regex>=2024.0.0
+requests>=2.31.0
+tldextract>=5.0.0
+tls-client
+# python-jobspy is installed separately with --no-deps to bypass its
+# numpy==1.26.3 pin (no wheel for Python 3.14+):
+#   pip install python-jobspy --no-deps
