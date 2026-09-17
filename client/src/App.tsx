@@ -104,10 +104,10 @@ export default function App() {
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
               <circle cx="5" cy="5" r="5" />
             </svg>
-            Live · Phase 1
+            Live · Phase 1.5
           </div>
           <h1>Pipeline</h1>
-          <p>Search real-time job postings from LinkedIn, Indeed &amp; Naukri</p>
+          <p>Search real-time job postings from LinkedIn, Indeed, Naukri &amp; Glassdoor</p>
         </header>
 
         {/* ── Search Form ── */}
@@ -219,7 +219,7 @@ export default function App() {
           {loading && (
             <div className="loading-wrap" role="status" aria-live="polite">
               <div className="spinner" />
-              <p>Fetching live listings from job boards…<br />This may take up to 30 seconds.</p>
+              <p>Fetching live listings from 4 job boards…<br />Broad searches may take 1–3 minutes.</p>
             </div>
           )}
 
@@ -352,7 +352,7 @@ export default function App() {
 
         {/* ── Footer ── */}
         <footer className="app-footer">
-          <p>Pipeline · Phase 1 · Powered by python-jobspy</p>
+          <p>Pipeline · Phase 1.5 · Powered by python-jobspy</p>
         </footer>
       </div>
     </div>
