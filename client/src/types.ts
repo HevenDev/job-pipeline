@@ -9,6 +9,8 @@ export interface Job {
   job_url?: string | null
   site?: string
   matched_location?: string | null
+  first_seen_at?: string | null
+  created_at?: string | null
 }
 
 export interface SearchHistory {

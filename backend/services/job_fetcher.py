@@ -127,12 +127,29 @@ def fetch(
     subset = jobs_df[available].copy()
 
     jobs: list[dict] = []
+    # Build a set of keywords from the canonical matched_location so we can
+    # validate each job's actual location before stamping the badge.
+    # e.g. "Gurugram" → {"gurugram"}, "New Delhi" → {"new", "delhi"}
+    canonical_words = set(matched_location.lower().split())
+
     for row in subset.itertuples(index=False):
         record: dict = {}
         for field in available:
             record[field] = _safe_value(getattr(row, field, None))
-        record["matched_location"] = matched_location
+
+        # Only stamp the matched_location badge when the job's actual location
+        # string contains at least one canonical city keyword.  This prevents
+        # off-target results (e.g. Seattle, San Jose) from appearing with an
+        # "NCR" or "Gurugram" region badge just because they came from a
+        # Gurugram query.
+        actual_loc = (record.get("location") or "").lower()
+        if actual_loc and any(word in actual_loc for word in canonical_words):
+            record["matched_location"] = matched_location
+        else:
+            record["matched_location"] = None  # don't badge foreign-city results
+
         jobs.append(record)
+
 
     # Update per-site returned counts
     if "site" in jobs_df.columns:

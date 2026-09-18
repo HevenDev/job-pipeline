@@ -1,94 +1,283 @@
 import type { Job } from '../types'
 import { formatDate, normaliseSite, formatJobType } from '../utils'
+import { MapPin, ExternalLink, Building2, Clock, Inbox } from 'lucide-react'
+
+const SITE_STYLE: Record<string, { badge: string; dot: string; label: string }> = {
+  linkedin:      { badge: 'text-blue-400 border-blue-500/30 bg-blue-500/10',          dot: 'bg-blue-400',    label: 'LinkedIn' },
+  indeed:        { badge: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10', dot: 'bg-emerald-400', label: 'Indeed' },
+  naukri:        { badge: 'text-yellow-400 border-yellow-500/30 bg-yellow-500/10',    dot: 'bg-yellow-400',  label: 'Naukri' },
+  glassdoor:     { badge: 'text-violet-400 border-violet-500/30 bg-violet-500/10',    dot: 'bg-violet-400',  label: 'Glassdoor' },
+  zip_recruiter: { badge: 'text-rose-400 border-rose-500/30 bg-rose-500/10',          dot: 'bg-rose-400',    label: 'ZipRecruiter' },
+}
+
+const FALLBACK_SITE = { badge: 'text-slate-400 border-slate-600 bg-white/5', dot: 'bg-slate-400', label: '' }
 
 interface JobsTableProps {
   jobs: Job[]
+  loading?: boolean
 }
 
-export default function JobsTable({ jobs }: JobsTableProps) {
+function SkeletonRow() {
   return (
-    <div className="jobs-table-wrap">
-      <table className="jobs-table" aria-label="Job listings">
-        <thead>
-          <tr>
-            <th scope="col">Title</th>
-            <th scope="col">Company</th>
-            <th scope="col">Location</th>
-            <th scope="col">Type</th>
-            <th scope="col">Posted</th>
-            <th scope="col">Source</th>
-            <th scope="col">Link</th>
-          </tr>
-        </thead>
-        <tbody>
-          {jobs.map((job, idx) => (
-            <tr key={job.job_url || `no-url-${idx}`}>
-              <td>
-                <span className="job-title">{job.title ?? '—'}</span>
-              </td>
-              <td>
-                <span className="job-company">{job.company ?? '—'}</span>
-              </td>
-              <td>
-                <span className="job-location">
-                  {job.location ?? '—'}
-                  {job.matched_location && (
-                    <span className="matched-location-badge">
-                      {job.matched_location}
-                    </span>
-                  )}
-                </span>
-              </td>
-              <td>
-                <span
-                  className={`type-badge${job.is_remote ? ' remote' : ''}`}
-                >
-                  {formatJobType(job.job_type, job.is_remote)}
-                </span>
-              </td>
-              <td>{formatDate(job.date_posted)}</td>
-              <td>
-                {job.site ? (
-                  <span className={`site-badge ${normaliseSite(job.site)}`}>
-                    {job.site}
-                  </span>
-                ) : (
-                  '—'
-                )}
-              </td>
-              <td>
-                {job.job_url ? (
-                  <a
-                    href={job.job_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-view"
-                    aria-label={`View ${job.title ?? 'job'} posting`}
-                  >
-                    View
-                    <svg
-                      width="11"
-                      height="11"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                      <polyline points="15 3 21 3 21 9" />
-                      <line x1="10" y1="14" x2="21" y2="3" />
-                    </svg>
-                  </a>
-                ) : (
-                  '—'
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <tr className="border-b border-white/[0.04]">
+      {[220, 140, 140, 80, 80, 90, 60].map((w, i) => (
+        <td key={i} className="px-4 py-3.5">
+          <div className="skeleton h-4 rounded-md" style={{ width: w }} />
+        </td>
+      ))}
+    </tr>
+  )
+}
+
+function MobileJobCard({ job, idx }: { job: Job; idx: number }) {
+  const site = normaliseSite(job.site ?? '')
+  const s = SITE_STYLE[site] ?? FALLBACK_SITE
+  const isRemote = job.is_remote
+  const jobType = formatJobType(job.job_type, job.is_remote)
+  const showBadge = job.matched_location &&
+    !job.location?.toLowerCase().includes(job.matched_location.toLowerCase())
+
+  return (
+    <div
+      className="rounded-2xl border border-violet-500/10 bg-white/[0.03] p-4 transition-all duration-200 hover:border-violet-500/25 hover:bg-white/[0.05] animate-fade-up"
+      style={{ animationDelay: `${Math.min(idx, 8) * 40}ms` }}
+    >
+      {/* Title + link */}
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <span className="font-semibold text-slate-100 leading-snug">{job.title ?? '—'}</span>
+        {job.job_url && (
+          <a
+            href={job.job_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[12px] font-semibold text-violet-300 transition-all hover:bg-violet-500/20 hover:border-violet-500/50"
+          >
+            View <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+      </div>
+
+      {/* Company */}
+      <div className="flex items-center gap-1.5 text-[13px] text-slate-400 mb-2">
+        <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+        {job.company ?? '—'}
+      </div>
+
+      {/* Location */}
+      <div className="flex items-center gap-1.5 text-[13px] text-slate-400 mb-3">
+        <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+        <span>{job.location ?? '—'}</span>
+        {showBadge && (
+          <span className="rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 text-[10px] font-semibold text-violet-400">
+            {job.matched_location}
+          </span>
+        )}
+      </div>
+
+      {/* Meta row */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Type */}
+        <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${
+          isRemote
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+            : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300'
+        }`}>{jobType}</span>
+
+        {/* Source */}
+        {job.site && (
+          <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${s.badge}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+            {s.label || job.site}
+          </span>
+        )}
+
+        {/* Posted & Searched */}
+        <div className="ml-auto text-right">
+          {job.date_posted && (
+            <span className="flex items-center justify-end gap-1 text-[12px] text-slate-400">
+              <Clock className="h-3 w-3 text-slate-500" />{formatDate(job.date_posted)}
+            </span>
+          )}
+          {(job.first_seen_at || job.created_at) && (
+            <span className="text-[10px] text-slate-500 block">
+              Searched: {formatDate(job.first_seen_at || job.created_at)}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
+  )
+}
+
+export default function JobsTable({ jobs, loading }: JobsTableProps) {
+  if (loading && jobs.length === 0) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-violet-500/10 bg-white/[0.03] shadow-[0_4px_24px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+        <div className="overflow-x-auto hidden sm:block">
+          <table className="w-full text-sm" aria-label="Loading job listings">
+            <thead>
+              <tr className="border-b border-violet-500/10 bg-white/[0.02]">
+                {['Title', 'Company', 'Location', 'Type', 'Posted', 'Source', 'Link'].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} />)}
+            </tbody>
+          </table>
+        </div>
+        {/* Mobile skeletons */}
+        <div className="sm:hidden space-y-3 p-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-xl border border-violet-500/10 bg-white/[0.03] p-4 space-y-2.5">
+              <div className="skeleton h-4 w-3/4" />
+              <div className="skeleton h-3.5 w-1/2" />
+              <div className="skeleton h-3.5 w-2/3" />
+              <div className="flex gap-2"><div className="skeleton h-5 w-20" /><div className="skeleton h-5 w-16" /></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (jobs.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-20 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-violet-500/10 bg-white/[0.03]">
+          <Inbox className="h-6 w-6 text-slate-500" />
+        </div>
+        <h3 className="font-semibold text-slate-100">No jobs found</h3>
+        <p className="max-w-xs text-sm text-slate-400">
+          No results match your current filters — try broader roles or clear the date range.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {/* ── Desktop table (sm+) ── */}
+      <div className="hidden sm:block overflow-hidden rounded-2xl border border-violet-500/10 bg-white/[0.03] shadow-[0_4px_24px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" aria-label="Job listings">
+            <thead>
+              <tr className="border-b border-violet-500/10 bg-white/[0.02]">
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5">Title</span>
+                </th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5"><Building2 className="h-3 w-3" /> Company</span>
+                </th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5"><MapPin className="h-3 w-3" /> Location</span>
+                </th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">Type</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5"><Clock className="h-3 w-3" /> Posted</span>
+                </th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">Source</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-widest text-slate-400">Link</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map((job, idx) => {
+                const site = normaliseSite(job.site ?? '')
+                const s = SITE_STYLE[site] ?? FALLBACK_SITE
+                const isRemote = job.is_remote
+                const jobType = formatJobType(job.job_type, job.is_remote)
+                const showBadge = job.matched_location &&
+                  !job.location?.toLowerCase().includes(job.matched_location.toLowerCase())
+
+                return (
+                  <tr
+                    key={job.job_url || `no-url-${idx}`}
+                    className="border-b border-white/[0.04] last:border-0 transition-colors duration-150 hover:bg-violet-500/[0.04] animate-fade-up"
+                    style={{ animationDelay: `${Math.min(idx, 8) * 30}ms` }}
+                  >
+                    {/* Title */}
+                    <td className="px-4 py-3.5 max-w-[200px]">
+                      <span className="font-semibold text-slate-100 leading-snug line-clamp-2">{job.title ?? '—'}</span>
+                    </td>
+
+                    {/* Company */}
+                    <td className="px-4 py-3.5 max-w-[140px]">
+                      <span className="text-slate-400 text-[13px] truncate block">{job.company ?? '—'}</span>
+                    </td>
+
+                    {/* Location */}
+                    <td className="px-4 py-3.5 max-w-[150px]">
+                      <div className="flex items-start gap-1 text-slate-400 text-[13px]">
+                        <MapPin className="h-3 w-3 mt-0.5 shrink-0 text-slate-500" />
+                        <span className="truncate">
+                          {job.location ?? '—'}
+                          {showBadge && (
+                            <span className="ml-1.5 inline-block rounded-md border border-violet-500/25 bg-violet-500/10 px-1.5 py-0 text-[10px] font-semibold text-violet-400 align-middle">
+                              {job.matched_location}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    </td>
+
+                    {/* Type */}
+                    <td className="px-4 py-3.5 whitespace-nowrap">
+                      <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${
+                        isRemote
+                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                          : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300'
+                      }`}>{jobType}</span>
+                    </td>
+
+                    {/* Posted & Searched */}
+                    <td className="px-4 py-3.5 whitespace-nowrap text-[13px] text-slate-400">
+                      <div className="font-medium text-slate-300">{formatDate(job.date_posted)}</div>
+                      {(job.first_seen_at || job.created_at) && (
+                        <div className="text-[11px] text-slate-500 font-normal">
+                          Searched: {formatDate(job.first_seen_at || job.created_at)}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Source */}
+                    <td className="px-4 py-3.5 whitespace-nowrap">
+                      {job.site ? (
+                        <span className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${s.badge}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+                          {s.label || job.site}
+                        </span>
+                      ) : '—'}
+                    </td>
+
+                    {/* Link */}
+                    <td className="px-4 py-3.5">
+                      {job.job_url ? (
+                        <a
+                          href={job.job_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`View ${job.title ?? 'job'}`}
+                          className="inline-flex items-center gap-1 rounded-lg border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[12px] font-semibold text-violet-300 transition-all duration-150 hover:bg-violet-500/20 hover:border-violet-500/50 hover:-translate-y-px"
+                        >
+                          View <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Mobile cards (below sm) ── */}
+      <div className="sm:hidden space-y-3">
+        {jobs.map((job, idx) => (
+          <MobileJobCard key={job.job_url || `m-${idx}`} job={job} idx={idx} />
+        ))}
+      </div>
+    </>
   )
 }

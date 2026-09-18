@@ -21,6 +21,8 @@ class JobListing(BaseModel):
     job_url: Optional[str] = None
     site: Optional[str] = None
     matched_location: Optional[str] = None
+    first_seen_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
     
     model_config = ConfigDict(populate_by_name=True)
 

@@ -1,11 +1,15 @@
 import asyncio
+import os
+from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-import sys
+
+load_dotenv()
 
 async def main():
-    uri = "mongodb+srv://hevendevofficial_db_user:Pwq4rXah78IOjcRv@cluster0.ynebdey.mongodb.net/?retryWrites=true&w=majority"
+    uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+    db_name = os.getenv("MONGO_DB_NAME", "pipeline")
     client = AsyncIOMotorClient(uri)
-    db = client["Job-pipeline"]
+    db = client[db_name]
     count = await db.jobs.count_documents({})
     print(f"Total jobs: {count}")
 
