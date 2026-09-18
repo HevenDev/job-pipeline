@@ -128,13 +128,13 @@ docker run -d -p 8000:8000 --env-file backend/.env --name job-pipeline-app job-p
 
 **Single-line (PowerShell / CMD / Bash):**
 ```powershell
-docker run -d -p 8000:8000 -e MONGO_URI="mongodb+srv://hevendevofficial_db_user:x4kSK40PMO9naz0Z@cluster0.ynebdey.mongodb.net" -e MONGO_DB_NAME="Job-pipeline" --name job-pipeline-app job-pipeline:latest
+docker run -d -p 8000:8000 -e MONGO_URI="YOUR_MONGODB_URI" -e MONGO_DB_NAME="Job-pipeline" --name job-pipeline-app job-pipeline:latest
 ```
 
 **PowerShell Multi-line (using backtick `` ` ``):**
 ```powershell
 docker run -d -p 8000:8000 `
-  -e MONGO_URI="mongodb+srv://hevendevofficial_db_user:x4kSK40PMO9naz0Z@cluster0.ynebdey.mongodb.net" `
+  -e MONGO_URI="YOUR_MONGODB_URI" `
   -e MONGO_DB_NAME="Job-pipeline" `
   --name job-pipeline-app `
   job-pipeline:latest
@@ -172,7 +172,7 @@ This repository includes a multi-stage [Dockerfile](file:///d:/deployed/pipeline
    - **Environment**: `Docker`
    - **Branch**: `main`
 5. In **Environment Variables**, configure:
-   - `MONGO_URI`: `mongodb+srv://hevendevofficial_db_user:x4kSK40PMO9naz0Z@cluster0.ynebdey.mongodb.net`
+   - `MONGO_URI`: `YOUR_MONGODB_URI`
    - `MONGO_DB_NAME`: `Job-pipeline`
    - `REDIS_URL`: *(Optional)* Add a free Redis instance on Render (**New +** → **Redis**) or [Upstash](https://upstash.com/), or leave empty for automatic fallback.
 6. Click **Deploy Web Service**!
