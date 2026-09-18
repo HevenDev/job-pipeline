@@ -10,6 +10,5 @@ requests>=2.31.0
 tldextract>=5.0.0
 tls-client
 markdownify>=0.12.0
-# python-jobspy is installed from GitHub (PyPI 1.1.82 has Naukri parsing bug):
-#   pip uninstall python-jobspy -y
-#   pip install "git+https://github.com/speedyapply/JobSpy.git"
+# python-jobspy must be installed from GitHub (PyPI 1.1.82 has a Naukri parsing bug)
+git+https://github.com/speedyapply/JobSpy.git

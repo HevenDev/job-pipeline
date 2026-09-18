@@ -1,7 +1,7 @@
-# Pipeline — Job Listings Aggregator (Phase 1.5)
+# Pipeline — Job Listings Aggregator (Version 2)
 
 Search live job postings from **LinkedIn**, **Indeed**, **Naukri**, and **Glassdoor**
-with dynamic keyword expansion, per-site telemetry, and deduplication.
+with real-time Server-Sent Events (SSE) streaming, multi-tag input, per-site telemetry, and deduplication.
 
 ```
 d:\deployed\pipeline\
@@ -42,11 +42,8 @@ d:\deployed\pipeline\
 ```powershell
 cd backend
 
-# Install base dependencies
-pip install "numpy>=2.0" pandas fastapi "uvicorn[standard]" python-dateutil beautifulsoup4 markdownify requests tldextract tls-client
-
-# Install python-jobspy from GitHub (PyPI 1.1.82 has Naukri parsing bug):
-pip install "git+https://github.com/speedyapply/JobSpy.git" --no-deps
+# Install all dependencies (including JobSpy directly from GitHub to fix Naukri parsing bug)
+pip install -r requirements.txt
 
 # Start the API server
 python -m uvicorn main:app --reload --port 8000
@@ -72,10 +69,9 @@ Frontend at **http://localhost:5173** (or next available port).
 ## 3 — Example search (end-to-end verification)
 
 1. Open http://localhost:5173
-2. Enter **Role**: `java`, **Location**: `Gurugram, India`
+2. Enter **Role**: `java` `developer` (Press Enter after each), **Location**: `Gurugram` `Delhi`
 3. Click **Search Jobs**
-4. Wait 1–3 minutes (sequential scrape across 4 sites + 5 keyword variants)
-5. Check `source_status` in http://localhost:8000/docs → Try it out
+4. The results table will populate in real-time as the stream delivers batches of scraped jobs.
 
 ---
 
@@ -85,39 +81,36 @@ Frontend at **http://localhost:5173** (or next available port).
 GET /api/jobs
 ```
 
-| Parameter  | Type    | Required | Default | Description |
-|------------|---------|----------|---------|-------------|
-| `role`     | string  | ✅       | —       | Job title / keyword |
-| `location` | string  | ✅       | —       | e.g. `Gurugram, India` |
-| `job_type` | string  | ❌       | —       | `fulltime`, `parttime`, `internship`, `contract` |
-| `is_remote`| boolean | ❌       | —       | `true` = remote only |
-| `hours_old`| integer | ❌       | `168`   | Max posting age in hours (7 days default) |
+| Parameter  | Type         | Required | Default | Description |
+|------------|--------------|----------|---------|-------------|
+| `role`     | list[string] | ✅       | —       | One or more job title / keyword tags (repeated param) |
+| `location` | list[string] | ✅       | —       | One or more city names (repeated param) |
+| `job_type` | string       | ❌       | —       | `fulltime`, `parttime`, `internship`, `contract` |
+| `is_remote`| boolean      | ❌       | —       | `true` = remote only |
+| `hours_old`| integer      | ❌       | `168`   | Max posting age in hours (7 days default) |
+| `offset`   | integer      | ❌       | `0`     | Pagination offset for "Load More" |
 
-**Response** includes `source_status` per site — use it to distinguish
-"no jobs found" from "site was blocked":
+**Response** streams Server-Sent Events (SSE). Example frames:
 
 ```json
-{
-  "total": 312,
-  "source_status": {
-    "linkedin":  { "calls": 1, "returned": 87, "errors": 0 },
-    "indeed":    { "calls": 5, "returned": 140, "errors": 0 },
-    "naukri":    { "calls": 5, "returned": 0,  "errors": 5 },
-    "glassdoor": { "calls": 5, "returned": 85, "errors": 0 }
-  },
-  "jobs": [...]
-}
+event: batch
+data: {"jobs": [...], "tag": "java", "city": "Gurugram", "sites": ["indeed"], "count": 25}
+
+event: done
+data: {"total": 25}
 ```
 
 ---
 
-## How keyword expansion works
+## How expansion works (Version 2)
 
-| User input              | Sites queried                             |
-|-------------------------|-------------------------------------------|
-| `java`                  | LinkedIn × 1 (original) + Indeed/Naukri/Glassdoor × 5 variants |
-| `python developer`      | LinkedIn × 1 + others × 1 (no expansion — already a full title) |
-| `machine learning`      | LinkedIn × 1 + others × 5 variants       |
+| Input Location | Execution Strategy                                      |
+|----------------|---------------------------------------------------------|
+| `Gurugram`     | Expands to full NCR cluster (Noida, Delhi, etc).        |
+| `Gurgaon`      | Uses `Gurugram` canonical name, expands to NCR cluster. |
+| `Mumbai`       | Treated as a single city (no expansion).                |
+
+Roles are queried directly as tags — `LinkedIn` gets exactly 1 call per role tag (ignoring city/spelling variants to preserve rate limits), while `Indeed`/`Naukri`/`Glassdoor` are iterated over every combination of role × city × spelling variant.
 
 ---
 
@@ -128,7 +121,5 @@ GET /api/jobs
   of the jobspy version. `source_status.naukri.errors` will be > 0 when
   this happens. This is a network/IP-level issue — no code change can
   fix it without proxy rotation (deferred to a later phase).
-- **Response time**: Broad searches (5 variants, 4 sites) can take 1–3 minutes.
-  The frontend shows an appropriate loading state.
-- **No persistence**: Jobs are fetched live on every request and not stored anywhere.
-- **Phase 2** will add: scheduling, Telegram/email notifications, saved searches, proxy rotation.
+- **Response time**: Broad searches across multiple tags and expanded cities can take several minutes to complete fully, but results stream in immediately as they are scraped.
+- **No persistence**: Jobs are fetched live on every request and not stored anywhere. (Cross-request deduplication handles "Load More" natively).
