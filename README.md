@@ -34,6 +34,10 @@ d:\deployed\pipeline\
 | Node.js | 18+     |
 | npm     | 9+      |
 | git     | any     |
+| Docker Desktop | Required for local Redis cache |
+| MongoDB Atlas | Cloud cluster connection string |
+
+> **Note on Persistence**: This project uses MongoDB Atlas rather than a local Mongo container for durable data storage. Create a scoped DB user and whitelist your IP in Atlas Network Access. Redis runs locally via Docker purely for caching; if Docker Desktop is not running, caching will gracefully and silently degrade to a no-op while core database operations proceed.
 
 ---
 
@@ -42,11 +46,23 @@ d:\deployed\pipeline\
 ```powershell
 cd backend
 
-# Install all dependencies (including JobSpy directly from GitHub to fix Naukri parsing bug)
+# 1. Environment Setup
+cp .env.example .env
+# Fill in MONGO_URI (Atlas connection string) in .env
+
+# 2. Start Redis Cache (optional but recommended)
+# Confirm that the compose file defines only `redis` and not Mongo.
+docker-compose up -d
+
+# 3. Install all dependencies (including JobSpy from GitHub)
 pip install -r requirements.txt
 
-# Start the API server
+# 4. Start the API server
+# Mongo indexes are created automatically on startup, no manual migration step needed.
 python -m uvicorn main:app --reload --port 8000
+
+# 5. Optional: Seed historical data
+# python scripts/seed_from_export.py batch1.md btach2.md
 ```
 
 API available at **http://localhost:8000**  
@@ -100,6 +116,17 @@ event: done
 data: {"total": 25}
 ```
 
+```
+GET /api/history
+```
+Returns a paginated list of `SearchHistoryDocument` objects.
+Supports filters: `role`, `location`, `job_type`, `source`, `start_date`, `end_date`.
+
+```
+GET /api/history/{search_id}/jobs
+```
+Returns the full job documents matched by a historical search.
+
 ---
 
 ## How expansion works (Version 2)
@@ -122,4 +149,4 @@ Roles are queried directly as tags — `LinkedIn` gets exactly 1 call per role t
   this happens. This is a network/IP-level issue — no code change can
   fix it without proxy rotation (deferred to a later phase).
 - **Response time**: Broad searches across multiple tags and expanded cities can take several minutes to complete fully, but results stream in immediately as they are scraped.
-- **No persistence**: Jobs are fetched live on every request and not stored anywhere. (Cross-request deduplication handles "Load More" natively).
+- **Caching Degradation**: Redis is used for TTL-based caching to avoid redundant scrapes. If Docker Desktop (Redis) is down, caching degrades gracefully but silently.

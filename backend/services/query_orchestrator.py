@@ -149,7 +149,6 @@ def stream(
         len(roles) * gd_calls_per_tag,
     )
 
-    seen_urls: set[str] = set()
     grand_total: int = 0
     t_start = time.monotonic()
 
@@ -170,7 +169,7 @@ def stream(
                     results_wanted=config.DEFAULT_RESULTS_WANTED,
                     offset=offset,
                 )
-                new_jobs = _filter_seen(li_jobs, seen_urls)
+                new_jobs = li_jobs  # No longer filtering here
                 grand_total += len(new_jobs)
                 yield {"event": "batch", "data": {
                     "jobs": new_jobs, "tag": tag, "city": loc,
@@ -204,7 +203,7 @@ def stream(
                             results_wanted=config.DEFAULT_RESULTS_WANTED,
                             offset=offset,
                         )
-                        new_jobs = _filter_seen(v_jobs, seen_urls)
+                        new_jobs = v_jobs  # No longer filtering here
                         grand_total += len(new_jobs)
                         yield {"event": "batch", "data": {
                             "jobs": new_jobs, "tag": tag, "city": canonical,
@@ -237,7 +236,7 @@ def stream(
                         results_wanted=config.DEFAULT_RESULTS_WANTED,
                         offset=offset,
                     )
-                    new_jobs = _filter_seen(gd_jobs, seen_urls)
+                    new_jobs = gd_jobs  # No longer filtering here
                     grand_total += len(new_jobs)
                     yield {"event": "batch", "data": {
                         "jobs": new_jobs, "tag": tag, "city": canonical,
@@ -256,14 +255,6 @@ def stream(
 
 
 def _filter_seen(jobs: list[dict], seen_urls: set[str]) -> list[dict]:
-    """Return jobs not yet seen; update seen_urls in-place."""
-    out: list[dict] = []
-    for job in jobs:
-        raw_url = job.get("job_url") or ""
-        key = raw_url.strip().lower()
-        if not key:
-            out.append(job)
-        elif key not in seen_urls:
-            seen_urls.add(key)
-            out.append(job)
-    return out
+    # Deprecated: Filtering moved to services/event_stream.py
+    pass
+

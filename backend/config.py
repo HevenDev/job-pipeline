@@ -1,8 +1,21 @@
 """
-config.py — All tunable constants for the Job Aggregator backend.
-No environment variables needed in this phase; edit values here directly.
+config.py — All tunable constants and environment configuration.
+Loads from .env if present.
 """
 from __future__ import annotations
+import os
+from dotenv import load_dotenv
+
+load_dotenv()  # load environment variables from .env
+
+# ── Database & Cache Config ──────────────────────────────────────────────────
+MONGO_URI: str = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+MONGO_DB_NAME: str = os.getenv("MONGO_DB_NAME", "pipeline")
+REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+SEARCH_CACHE_TTL_SECONDS: int = int(os.getenv("SEARCH_CACHE_TTL_SECONDS", "1800"))
+EVENTS_LOG_TTL_DAYS: int = int(os.getenv("EVENTS_LOG_TTL_DAYS", "60"))
+BULK_WRITE_BATCH_FLUSH: str = os.getenv("BULK_WRITE_BATCH_FLUSH", "per_event") # per_event | per_n_jobs | end_of_run
 
 # ── Site routing ────────────────────────────────────────────────────────────
 # LinkedIn is kept in a separate constant because it is hit only ONCE per
@@ -24,24 +37,15 @@ DEFAULT_RESULTS_WANTED: int = 120
 DEFAULT_HOURS_OLD: int = 168
 
 # ── City spelling variants ──────────────────────────────────────────────────
-# Maps the lowercased canonical/user-input city name to ALL accepted spellings.
-# The FIRST entry in each list is the canonical name used for matched_location.
-# Indeed + Naukri: one scrape_jobs() call per spelling variant.
-# Glassdoor: one call using whichever single spelling it parses (first entry
-#   that is known to work — currently the second entry for Gurugram/Gurgaon).
-# Keys are lowercased; matching is always case-insensitive.
 CITY_SPELLING_VARIANTS: dict[str, list[str]] = {
     "gurugram": ["Gurugram", "Gurgaon"],
-    "gurgaon":  ["Gurugram", "Gurgaon"],   # user may type either spelling
+    "gurgaon":  ["Gurugram", "Gurgaon"],
     "bengaluru": ["Bengaluru", "Bangalore"],
     "bangalore": ["Bengaluru", "Bangalore"],
     "bombay":   ["Mumbai", "Bombay"],
     "mumbai":   ["Mumbai", "Bombay"],
 }
 
-# Glassdoor-safe spelling: the spelling Glassdoor's location parser accepts.
-# If a city is NOT in this map, its canonical name (variants list first entry)
-# is used for Glassdoor as well.
 GLASSDOOR_CITY_SPELLING: dict[str, str] = {
     "gurugram": "Gurgaon",
     "gurgaon":  "Gurgaon",
@@ -52,8 +56,4 @@ GLASSDOOR_CITY_SPELLING: dict[str, str] = {
 }
 
 # ── NCR cluster ─────────────────────────────────────────────────────────────
-# If the user's location (case-insensitive) matches any city in this list,
-# the search expands to query ALL cities in the cluster, not just the one
-# given.  This broadens Delhi-NCR coverage without requiring the user to
-# enumerate every satellite city.
 NCR_CLUSTER: list[str] = ["Gurugram", "Noida", "Delhi", "Ghaziabad", "Faridabad"]

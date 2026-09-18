@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import logging
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import jobs as jobs_router
+from routers import history as history_router
+from db import mongo, redis_client
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -24,10 +28,21 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await mongo.connect_db()
+    await redis_client.connect_redis()
+    yield
+    # Shutdown
+    await mongo.close_db()
+    await redis_client.close_redis()
+
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Pipeline — Job Aggregator API",
-    version="1.5.0",
+    version="2.0.0",
+    lifespan=lifespan,
     description=(
         "Fetches live job postings from LinkedIn, Indeed, Naukri, and Glassdoor "
         "using python-jobspy, applies dynamic keyword expansion, and returns a "
@@ -46,3 +61,4 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(jobs_router.router)
+app.include_router(history_router.router)
