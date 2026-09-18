@@ -1,127 +1,269 @@
 """
-services/query_orchestrator.py — Coordinates all scrape_jobs() calls for
-one user search and returns a single merged, deduplicated result set.
+services/query_orchestrator.py — Generator that streams scrape_jobs() results
+for one user search, yielding one SSE event dict per scrape_jobs() call.
 
 Strategy (fully sequential — no threads/async):
 
-  1. Expand the user's role into keyword variants via keyword_expander.
-  2. Call LinkedIn ONCE with the original role (avoids rate-limit buildup
-     from repeated sequential calls on the same site).
-  3. For each variant, call Indeed + Naukri + Glassdoor sequentially.
-  4. Merge all results and deduplicate by job_url.
-  5. Aggregate per-site telemetry into source_status for the response.
+  LinkedIn (ONCE per tag × per user-supplied location):
+    For each role tag and each user-supplied location string, call LinkedIn
+    once.  LinkedIn is NOT further multiplied by NCR-expanded cities — the
+    geographic search is fuzzy enough to cover the wider area.
 
-Why LinkedIn is separate:
-  LinkedIn rate-limits based on total request volume in a time window,
-  not concurrency.  Calling it once per variant (N times) is equivalent
-  to N parallel calls from LinkedIn's perspective.  Calling it once with
-  the original term keeps us within safe limits while still getting
-  broad LinkedIn coverage.
+  Indeed + Naukri per tag × expanded city × spelling variant:
+    For each role tag and each city in the NCR-expanded list (which is the
+    union of all individual user location tags, each expanded independently),
+    make one scrape_jobs() call per spelling variant.
+
+  Glassdoor per tag × expanded city (one call, Glassdoor-safe spelling):
+    Exactly one call per tag×city, using GLASSDOOR_CITY_SPELLING.
+
+  Location expansion (per user-supplied location tag):
+    Single-city NCR match  → full NCR_CLUSTER (5 cities)
+    CITY_SPELLING_VARIANTS → canonical form, then NCR check
+    Anything else          → treated as a single opaque city
+
+  Deduplication:
+    A single seen_urls set is maintained for the lifetime of one stream()
+    call.  Cross-request dedup (across Load More) is the frontend's job.
+
+  Yielded event shapes:
+    {"event": "batch",     "data": {"jobs": [...], "tag": str, "city": str,
+                                    "sites": [...], "count": int}}
+    {"event": "job_error", "data": {"source": str, "message": str}}
+    {"event": "done",      "data": {"total": int}}
 """
 from __future__ import annotations
 
 import logging
+import re
 import time
-from typing import Optional
+from typing import Generator, Optional
 
 import config
-from models.schemas import JobSearchResponse, JobListing, SiteStatus
 from services import job_fetcher
-from utils import dedupe, keyword_expander
 
 logger = logging.getLogger(__name__)
 
 
-def _merge_status(
-    accumulated: dict[str, dict],
-    update: dict[str, dict],
-) -> None:
-    """Merge a single fetch()'s status counters into the running total."""
-    for site, counts in update.items():
-        if site not in accumulated:
-            accumulated[site] = {"calls": 0, "returned": 0, "errors": 0}
-        accumulated[site]["calls"]    += counts.get("calls", 0)
-        accumulated[site]["returned"] += counts.get("returned", 0)
-        accumulated[site]["errors"]   += counts.get("errors", 0)
+# ── Location helpers ────────────────────────────────────────────────────────
+
+def _resolve_cities(location: str) -> list[str]:
+    """Expand one user-supplied location tag into a list of cities to query.
+
+    - NCR city (any spelling) → full NCR_CLUSTER
+    - Otherwise               → [canonical form of the city]
+    """
+    loc = location.strip()
+    loc_lower = loc.lower()
+
+    cluster_lower: dict[str, str] = {c.lower(): c for c in config.NCR_CLUSTER}
+    variant_keys: set[str] = set(config.CITY_SPELLING_VARIANTS.keys())
+
+    # Direct NCR match
+    if loc_lower in cluster_lower:
+        logger.info("Location %r → NCR cluster (%d cities)", loc, len(config.NCR_CLUSTER))
+        return list(config.NCR_CLUSTER)
+
+    # Spelling-variant key (e.g. user typed "Gurgaon" which maps to "Gurugram")
+    if loc_lower in variant_keys:
+        canonical = config.CITY_SPELLING_VARIANTS[loc_lower][0]
+        if canonical.lower() in cluster_lower:
+            logger.info("Location %r (alias %r) → NCR cluster", loc, canonical)
+            return list(config.NCR_CLUSTER)
+        logger.info("Location %r → canonical %r", loc, canonical)
+        return [canonical]
+
+    # Opaque city (Bangalore, London, etc.)
+    return [loc]
 
 
-def run(
+def _all_cities(locations: list[str]) -> list[str]:
+    """Union of _resolve_cities() for every user-supplied location tag,
+    preserving order and removing duplicates."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for loc in locations:
+        for city in _resolve_cities(loc):
+            if city not in seen:
+                seen.add(city)
+                out.append(city)
+    return out
+
+
+def _spelling_variants(city: str) -> tuple[str, list[str]]:
+    """Return (canonical_name, [spelling1, spelling2, ...]) for a city."""
+    key = city.strip().lower()
+    variants = config.CITY_SPELLING_VARIANTS.get(key)
+    if variants:
+        return variants[0], variants
+    return city.strip(), [city.strip()]
+
+
+def _glassdoor_city(city: str) -> str:
+    """Return the Glassdoor-safe spelling for a city."""
+    key = city.strip().lower()
+    if key in config.GLASSDOOR_CITY_SPELLING:
+        return config.GLASSDOOR_CITY_SPELLING[key]
+    canonical, _ = _spelling_variants(city)
+    return canonical
+
+
+# ── Main generator ──────────────────────────────────────────────────────────
+
+def stream(
     *,
-    role: str,
-    location: str,
+    roles: list[str],
+    locations: list[str],
     job_type: Optional[str] = None,
     is_remote: Optional[bool] = None,
     hours_old: Optional[int] = None,
-) -> JobSearchResponse:
-    """Execute the full sequential search and return a JobSearchResponse."""
+    offset: int = 0,
+) -> Generator[dict, None, None]:
+    """Yield SSE event dicts for each scrape_jobs() call.
 
+    Never raises — individual failures are emitted as ``job_error`` events.
+    """
     effective_hours_old = hours_old if hours_old is not None else config.DEFAULT_HOURS_OLD
-    variants = keyword_expander.expand(role)
+    cities = _all_cities(locations)
+
+    sites_without_glassdoor = [s for s in config.VARIANT_LOOP_SITES if s != "glassdoor"]
+    glassdoor_sites = ["glassdoor"] if "glassdoor" in config.VARIANT_LOOP_SITES else []
+
+    # Pre-compute call count for the INFO log
+    variant_calls_per_tag = sum(len(_spelling_variants(c)[1]) for c in cities)
+    gd_calls_per_tag = len(cities) if glassdoor_sites else 0
+    li_calls_per_tag = len(locations)   # LinkedIn: once per tag × per user location
+    total_calls = len(roles) * (
+        li_calls_per_tag
+        + (variant_calls_per_tag if sites_without_glassdoor else 0)
+        + gd_calls_per_tag
+    )
 
     logger.info(
-        "Search started | role=%r location=%r variants=%s hours_old=%d",
-        role,
-        location,
-        variants,
-        effective_hours_old,
+        "Search started | tags=%s locations=%s expanded_cities=%s offset=%d "
+        "hours_old=%d total_scrape_calls=%d "
+        "(LinkedIn=%d, Indeed+Naukri=%d, Glassdoor=%d per tag)",
+        roles, locations, cities, offset, effective_hours_old, total_calls,
+        len(roles) * li_calls_per_tag,
+        len(roles) * (variant_calls_per_tag if sites_without_glassdoor else 0),
+        len(roles) * gd_calls_per_tag,
     )
 
-    all_jobs: list[dict] = []
-    accumulated_status: dict[str, dict] = {}
+    seen_urls: set[str] = set()
+    grand_total: int = 0
     t_start = time.monotonic()
 
-    # ── Step 1: LinkedIn — called ONCE with original role ──────────────────
-    logger.info("LinkedIn call | search_term=%r", role)
-    linkedin_jobs, linkedin_status = job_fetcher.fetch(
-        sites=config.LINKEDIN_SITES,
-        search_term=role,
-        location=location,
-        job_type=job_type,
-        is_remote=is_remote,
-        hours_old=effective_hours_old,
-        results_wanted=config.DEFAULT_RESULTS_WANTED,
-    )
-    all_jobs.extend(linkedin_jobs)
-    _merge_status(accumulated_status, linkedin_status)
+    for tag in roles:
 
-    # ── Step 2: Other sites — one call per keyword variant ─────────────────
-    for variant in variants:
-        logger.info(
-            "Variant loop call | sites=%s search_term=%r",
-            config.VARIANT_LOOP_SITES,
-            variant,
-        )
-        v_jobs, v_status = job_fetcher.fetch(
-            sites=config.VARIANT_LOOP_SITES,
-            search_term=variant,
-            location=location,
-            job_type=job_type,
-            is_remote=is_remote,
-            hours_old=effective_hours_old,
-            results_wanted=config.DEFAULT_RESULTS_WANTED,
-        )
-        all_jobs.extend(v_jobs)
-        _merge_status(accumulated_status, v_status)
+        # ── LinkedIn — once per tag × per user-supplied location ─────────────
+        for loc in locations:
+            logger.info("LinkedIn call | tag=%r location=%r", tag, loc)
+            try:
+                li_jobs, _ = job_fetcher.fetch(
+                    sites=config.LINKEDIN_SITES,
+                    search_term=tag,
+                    location=loc,
+                    matched_location=loc,
+                    job_type=job_type,
+                    is_remote=is_remote,
+                    hours_old=effective_hours_old,
+                    results_wanted=config.DEFAULT_RESULTS_WANTED,
+                    offset=offset,
+                )
+                new_jobs = _filter_seen(li_jobs, seen_urls)
+                grand_total += len(new_jobs)
+                yield {"event": "batch", "data": {
+                    "jobs": new_jobs, "tag": tag, "city": loc,
+                    "sites": config.LINKEDIN_SITES, "count": len(new_jobs),
+                }}
+            except Exception as exc:
+                logger.exception("LinkedIn error | tag=%r location=%r", tag, loc)
+                yield {"event": "job_error", "data": {"source": "linkedin", "message": str(exc)}}
 
-    # ── Step 3: Deduplicate ────────────────────────────────────────────────
-    deduped = dedupe.by_url(all_jobs)
+        # ── Indeed + Naukri + Glassdoor — per tag × expanded city ────────────
+        for city in cities:
+            canonical, spellings = _spelling_variants(city)
+            gd_city = _glassdoor_city(city)
+
+            # Indeed + Naukri: one call per spelling variant
+            if sites_without_glassdoor:
+                for spelling in spellings:
+                    logger.info(
+                        "Indeed+Naukri call | sites=%s tag=%r city=%r spelling=%r",
+                        sites_without_glassdoor, tag, canonical, spelling,
+                    )
+                    try:
+                        v_jobs, _ = job_fetcher.fetch(
+                            sites=sites_without_glassdoor,
+                            search_term=tag,
+                            location=spelling,
+                            matched_location=canonical,
+                            job_type=job_type,
+                            is_remote=is_remote,
+                            hours_old=effective_hours_old,
+                            results_wanted=config.DEFAULT_RESULTS_WANTED,
+                            offset=offset,
+                        )
+                        new_jobs = _filter_seen(v_jobs, seen_urls)
+                        grand_total += len(new_jobs)
+                        yield {"event": "batch", "data": {
+                            "jobs": new_jobs, "tag": tag, "city": canonical,
+                            "sites": sites_without_glassdoor, "count": len(new_jobs),
+                        }}
+                    except Exception as exc:
+                        logger.exception(
+                            "Indeed+Naukri error | sites=%s tag=%r spelling=%r",
+                            sites_without_glassdoor, tag, spelling,
+                        )
+                        yield {"event": "job_error", "data": {
+                            "source": ", ".join(sites_without_glassdoor), "message": str(exc),
+                        }}
+
+            # Glassdoor: one call per city, Glassdoor-safe spelling
+            if glassdoor_sites:
+                logger.info(
+                    "Glassdoor call | tag=%r canonical=%r glassdoor_spelling=%r",
+                    tag, canonical, gd_city,
+                )
+                try:
+                    gd_jobs, _ = job_fetcher.fetch(
+                        sites=glassdoor_sites,
+                        search_term=tag,
+                        location=gd_city,
+                        matched_location=canonical,
+                        job_type=job_type,
+                        is_remote=is_remote,
+                        hours_old=effective_hours_old,
+                        results_wanted=config.DEFAULT_RESULTS_WANTED,
+                        offset=offset,
+                    )
+                    new_jobs = _filter_seen(gd_jobs, seen_urls)
+                    grand_total += len(new_jobs)
+                    yield {"event": "batch", "data": {
+                        "jobs": new_jobs, "tag": tag, "city": canonical,
+                        "sites": glassdoor_sites, "count": len(new_jobs),
+                    }}
+                except Exception as exc:
+                    logger.exception("Glassdoor error | tag=%r city=%r", tag, gd_city)
+                    yield {"event": "job_error", "data": {"source": "glassdoor", "message": str(exc)}}
 
     elapsed = time.monotonic() - t_start
     logger.info(
-        "Search complete | raw=%d deduped=%d elapsed=%.1fs",
-        len(all_jobs),
-        len(deduped),
-        elapsed,
+        "Search complete | tags=%s locations=%s grand_total=%d elapsed=%.1fs",
+        roles, locations, grand_total, elapsed,
     )
+    yield {"event": "done", "data": {"total": grand_total}}
 
-    # ── Step 4: Build response ─────────────────────────────────────────────
-    source_status = {
-        site: SiteStatus(**counts)
-        for site, counts in accumulated_status.items()
-    }
 
-    return JobSearchResponse(
-        jobs=[JobListing(**j) for j in deduped],
-        total=len(deduped),
-        source_status=source_status,
-    )
+def _filter_seen(jobs: list[dict], seen_urls: set[str]) -> list[dict]:
+    """Return jobs not yet seen; update seen_urls in-place."""
+    out: list[dict] = []
+    for job in jobs:
+        raw_url = job.get("job_url") or ""
+        key = raw_url.strip().lower()
+        if not key:
+            out.append(job)
+        elif key not in seen_urls:
+            seen_urls.add(key)
+            out.append(job)
+    return out

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, useRef, useCallback, type KeyboardEvent, type FormEvent } from 'react'
 import './App.css'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -11,11 +11,27 @@ interface Job {
   date_posted?: string | null
   job_url?: string | null
   site?: string
+  matched_location?: string | null
 }
 
-interface ApiResponse {
+interface BatchData {
   jobs: Job[]
-  total: number
+  tag: string
+  city: string
+  sites: string[]
+  count: number
+}
+
+interface ErrorData {
+  source: string
+  message: string
+}
+
+
+interface StreamError {
+  id: string
+  source: string
+  message: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -40,60 +56,221 @@ function formatJobType(type?: string | null, isRemote?: boolean | null): string 
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+const MAX_TAGS = 6
+const MAX_LOCATIONS = 5
 
 // ── Component ──────────────────────────────────────────────────
 export default function App() {
-  // Form state
-  const [role, setRole] = useState('')
-  const [location, setLocation] = useState('')
+  // Tag input state
+  const [tags, setTags] = useState<string[]>([])
+  const [tagInput, setTagInput] = useState('')
+
+  // Location tag state
+  const [locationTags, setLocationTags] = useState<string[]>([])
+  const [locationInput, setLocationInput] = useState('')
+
+  // Other form fields
   const [jobType, setJobType] = useState('')
   const [workMode, setWorkMode] = useState('')
 
-  // Request state
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [jobs, setJobs] = useState<Job[] | null>(null)
+  // Results state — Map keyed by job_url for O(1) dedup
+  const [jobMap, setJobMap] = useState<Map<string, Job>>(new Map())
+
+  // Stream state
+  const [streaming, setStreaming] = useState(false)
+  const [sourcesChecked, setSourcesChecked] = useState(0)
+  const [streamErrors, setStreamErrors] = useState<StreamError[]>([])
+  const [streamDone, setStreamDone] = useState(false)
   const [searched, setSearched] = useState(false)
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!role.trim() || !location.trim()) return
+  // Pagination
+  const offsetRef = useRef(0)
 
-    setLoading(true)
-    setError(null)
-    setJobs(null)
-    setSearched(true)
+  // Refs — persistent across renders, not triggering re-render
+  const esRef = useRef<EventSource | null>(null)
+  const seenUrlsRef = useRef<Set<string>>(new Set())
+  const counterRef = useRef(0)
+  // didFinish: set to true inside the 'done' handler before es.close() so that
+  // onerror (which fires on ANY close, including clean ones) can no-op safely.
+  const didFinishRef = useRef(false)
 
-    const params = new URLSearchParams()
-    params.set('role', role.trim())
-    params.set('location', location.trim())
-    if (jobType) params.set('job_type', jobType)
-    if (workMode === 'remote') params.set('is_remote', 'true')
-    if (workMode === 'onsite') params.set('is_remote', 'false')
+  // ── Role tag handlers ────────────────────────────────────────
+  function commitTag(value: string) {
+    const trimmed = value.trim()
+    if (!trimmed) return
+    if (tags.includes(trimmed)) { setTagInput(''); return }
+    if (tags.length >= MAX_TAGS) return
+    setTags(prev => [...prev, trimmed])
+    setTagInput('')
+  }
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/jobs?${params.toString()}`)
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body?.detail ?? `Server error ${res.status}`)
-      }
-      const data: ApiResponse = await res.json()
-      setJobs(data.jobs)
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message)
-      } else {
-        setError('An unexpected error occurred.')
-      }
-    } finally {
-      setLoading(false)
+  function handleTagKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      commitTag(tagInput)
+    } else if (e.key === 'Backspace' && tagInput === '') {
+      setTags(prev => prev.slice(0, -1))
     }
   }
 
-  // Unique site names for the stats bar
-  const sites = jobs
-    ? [...new Set(jobs.map(j => j.site).filter(Boolean))]
-    : []
+  function removeTag(tag: string) {
+    setTags(prev => prev.filter(t => t !== tag))
+  }
+
+  // ── Location tag handlers ────────────────────────────────────
+  function commitLocationTag(value: string) {
+    const trimmed = value.trim()
+    if (!trimmed) return
+    if (locationTags.includes(trimmed)) { setLocationInput(''); return }
+    if (locationTags.length >= MAX_LOCATIONS) return
+    setLocationTags(prev => [...prev, trimmed])
+    setLocationInput('')
+  }
+
+  function handleLocationKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      commitLocationTag(locationInput)
+    } else if (e.key === 'Backspace' && locationInput === '') {
+      setLocationTags(prev => prev.slice(0, -1))
+    }
+  }
+
+  function removeLocationTag(tag: string) {
+    setLocationTags(prev => prev.filter(t => t !== tag))
+  }
+
+  // ── SSE stream helper ───────────────────────────────────────
+  const openStream = useCallback(
+    (currentTags: string[], currentLocations: string[], currentOffset: number, isLoadMore: boolean) => {
+      // Close any existing connection
+      if (esRef.current) {
+        esRef.current.close()
+        esRef.current = null
+      }
+
+      if (!isLoadMore) {
+        // Full reset for new searches
+        setJobMap(new Map())
+        seenUrlsRef.current = new Set()
+        setStreamErrors([])
+        setStreamDone(false)
+        setSourcesChecked(0)
+        setSearched(true)
+      }
+
+      setStreaming(true)
+      didFinishRef.current = false
+
+      // Build query string — repeated role= and location= params
+      const params = new URLSearchParams()
+      currentTags.forEach(t => params.append('role', t))
+      currentLocations.forEach(l => params.append('location', l))
+      if (jobType) params.set('job_type', jobType)
+      if (workMode === 'remote') params.set('is_remote', 'true')
+      if (workMode === 'onsite') params.set('is_remote', 'false')
+      if (currentOffset > 0) params.set('offset', String(currentOffset))
+
+      const es = new EventSource(`${API_BASE_URL}/api/jobs?${params.toString()}`)
+      esRef.current = es
+
+      es.addEventListener('batch', (e: MessageEvent) => {
+        const data: BatchData = JSON.parse(e.data)
+        // Debug: confirm batches are arriving with named listener
+        console.log('[SSE batch]', data.tag, data.city, 'jobs:', data.jobs.length)
+        setSourcesChecked(prev => prev + 1)
+
+        // ── Dedup OUTSIDE the state updater ────────────────────────────────
+        // React Strict Mode double-invokes functional state updaters to detect
+        // side effects. Mutating seenUrlsRef inside the updater would mean the
+        // second invocation finds all URLs already "seen" and returns an empty
+        // Map — causing jobs to silently disappear. Filter here (once, with a
+        // real side effect) then pass the clean list into a pure updater.
+        const newEntries: [string, Job][] = []
+        for (const job of data.jobs) {
+          const key = job.job_url?.trim().toLowerCase() || ''
+          if (!key) {
+            // No URL — generate a stable-enough key from counter
+            newEntries.push([`__no_url_${counterRef.current++}`, job])
+          } else if (!seenUrlsRef.current.has(key)) {
+            seenUrlsRef.current.add(key)
+            newEntries.push([key, job])
+          }
+        }
+
+        if (newEntries.length > 0) {
+          // Pure updater: no side effects, safe to double-invoke
+          setJobMap(prev => {
+            const next = new Map(prev)
+            for (const [k, v] of newEntries) next.set(k, v)
+            return next
+          })
+        }
+      })
+
+      es.addEventListener('job_error', (e: MessageEvent) => {
+        const data: ErrorData = JSON.parse(e.data)
+        setStreamErrors(prev => [
+          ...prev,
+          { id: `err-${Date.now()}-${Math.random()}`, source: data.source, message: data.message },
+        ])
+      })
+
+      es.addEventListener('done', (_e: MessageEvent) => {
+        // Mark finished BEFORE close() so onerror can detect a clean shutdown
+        didFinishRef.current = true
+        setStreaming(false)
+        setStreamDone(true)
+        es.close()
+        esRef.current = null
+      })
+
+      es.onerror = () => {
+        // onerror fires on ANY EventSource close, including after a clean done+close().
+        // Guard with didFinish so we don't show a spurious error on normal completion.
+        if (didFinishRef.current) return
+        setStreamErrors(prev => [
+          ...prev,
+          { id: `err-conn-${Date.now()}`, source: 'connection', message: 'Connection to server lost.' },
+        ])
+        setStreaming(false)
+        setStreamDone(true)
+        es.close()
+        esRef.current = null
+      }
+    },
+    [jobType, workMode]
+  )
+
+  // ── Form submit ─────────────────────────────────────────────
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    // Commit any partially-typed role tag
+    const finalTags = tagInput.trim() ? [...tags, tagInput.trim()] : tags
+    if (tagInput.trim()) { setTags(finalTags); setTagInput('') }
+    // Commit any partially-typed location tag
+    const finalLocations = locationInput.trim()
+      ? [...locationTags, locationInput.trim()]
+      : locationTags
+    if (locationInput.trim()) { setLocationTags(finalLocations); setLocationInput('') }
+
+    if (finalTags.length === 0 || finalLocations.length === 0) return
+    offsetRef.current = 0
+    openStream(finalTags, finalLocations, 0, false)
+  }
+
+  // ── Load More ───────────────────────────────────────────────
+  function handleLoadMore() {
+    const newOffset = jobMap.size
+    offsetRef.current = newOffset
+    openStream(tags, locationTags, newOffset, true)
+  }
+
+  // ── Derived values ──────────────────────────────────────────
+  const jobs = [...jobMap.values()]
+  const sites = [...new Set(jobs.map(j => j.site).filter(Boolean))]
+  const canSearch = tags.length > 0 && locationTags.length > 0 && !streaming
+  const showLoadMore = streamDone && jobs.length > 0 && !streaming
 
   return (
     <div className="app-wrapper">
@@ -104,7 +281,7 @@ export default function App() {
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
               <circle cx="5" cy="5" r="5" />
             </svg>
-            Live · Phase 1.5
+            Live · Phase 2
           </div>
           <h1>Pipeline</h1>
           <p>Search real-time job postings from LinkedIn, Indeed, Naukri &amp; Glassdoor</p>
@@ -115,32 +292,92 @@ export default function App() {
           <form onSubmit={handleSubmit}>
             <div className="search-card">
               <div className="search-grid">
-                {/* Role */}
-                <div className="field-group">
-                  <label htmlFor="field-role">Role / Keyword</label>
-                  <input
-                    id="field-role"
-                    type="text"
-                    placeholder="e.g. Software Engineer"
-                    value={role}
-                    onChange={e => setRole(e.target.value)}
-                    required
-                    autoComplete="off"
-                  />
+                {/* Tag / Keyword Input */}
+                <div className="field-group" style={{ gridColumn: '1 / -1' }}>
+                  <label htmlFor="tag-input-field">
+                    Role / Keywords
+                    <span className="tag-count-hint">
+                      {tags.length}/{MAX_TAGS} — Press Enter or comma to add
+                    </span>
+                  </label>
+                  <div
+                    className={`tag-input-wrap${tags.length >= MAX_TAGS ? ' is-maxed' : ''}`}
+                    onClick={() => document.getElementById('tag-input-field')?.focus()}
+                    role="group"
+                    aria-label="Keyword tags"
+                  >
+                    {tags.map(tag => (
+                      <span key={tag} className="tag-chip">
+                        {tag}
+                        <button
+                          type="button"
+                          className="tag-chip-remove"
+                          onClick={e => { e.stopPropagation(); removeTag(tag) }}
+                          aria-label={`Remove tag ${tag}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    {tags.length < MAX_TAGS && (
+                      <input
+                        id="tag-input-field"
+                        type="text"
+                        className="tag-inner-input"
+                        placeholder={tags.length === 0 ? 'e.g. Java Developer, SDE, Spring Boot…' : 'Add another…'}
+                        value={tagInput}
+                        onChange={e => setTagInput(e.target.value)}
+                        onKeyDown={handleTagKeyDown}
+                        onBlur={() => commitTag(tagInput)}
+                        autoComplete="off"
+                        disabled={streaming}
+                      />
+                    )}
+                  </div>
                 </div>
 
-                {/* Location */}
-                <div className="field-group">
-                  <label htmlFor="field-location">Location</label>
-                  <input
-                    id="field-location"
-                    type="text"
-                    placeholder="e.g. Delhi, India"
-                    value={location}
-                    onChange={e => setLocation(e.target.value)}
-                    required
-                    autoComplete="off"
-                  />
+                {/* Location Tag Input */}
+                <div className="field-group" style={{ gridColumn: '1 / -1' }}>
+                  <label htmlFor="location-input-field">
+                    Location
+                    <span className="tag-count-hint">
+                      {locationTags.length}/{MAX_LOCATIONS} — Press Enter or comma to add
+                    </span>
+                  </label>
+                  <div
+                    className={`tag-input-wrap${locationTags.length >= MAX_LOCATIONS ? ' is-maxed' : ''}`}
+                    onClick={() => document.getElementById('location-input-field')?.focus()}
+                    role="group"
+                    aria-label="Location tags"
+                  >
+                    {locationTags.map(tag => (
+                      <span key={tag} className="tag-chip tag-chip--location">
+                        {tag}
+                        <button
+                          type="button"
+                          className="tag-chip-remove"
+                          onClick={e => { e.stopPropagation(); removeLocationTag(tag) }}
+                          aria-label={`Remove location ${tag}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    {locationTags.length < MAX_LOCATIONS && (
+                      <input
+                        id="location-input-field"
+                        type="text"
+                        className="tag-inner-input"
+                        placeholder={locationTags.length === 0 ? 'e.g. Gurugram, Noida, Mumbai…' : 'Add city…'}
+                        value={locationInput}
+                        onChange={e => setLocationInput(e.target.value)}
+                        onKeyDown={handleLocationKeyDown}
+                        onBlur={() => commitLocationTag(locationInput)}
+                        autoComplete="off"
+                        disabled={streaming}
+                      />
+                    )}
+                  </div>
                 </div>
 
                 {/* Job Type */}
@@ -150,6 +387,7 @@ export default function App() {
                     id="field-job-type"
                     value={jobType}
                     onChange={e => setJobType(e.target.value)}
+                    disabled={streaming}
                   >
                     <option value="">Any</option>
                     <option value="fulltime">Full-time</option>
@@ -166,6 +404,7 @@ export default function App() {
                     id="field-work-mode"
                     value={workMode}
                     onChange={e => setWorkMode(e.target.value)}
+                    disabled={streaming}
                   >
                     <option value="">Any</option>
                     <option value="remote">Remote</option>
@@ -179,9 +418,9 @@ export default function App() {
                   id="btn-search-jobs"
                   type="submit"
                   className="btn-search"
-                  disabled={loading || !role.trim() || !location.trim()}
+                  disabled={!canSearch}
                 >
-                  {loading ? (
+                  {streaming ? (
                     <>
                       <span
                         className="spinner"
@@ -215,41 +454,47 @@ export default function App() {
 
         {/* ── Results Area ── */}
         <main>
-          {/* Full-page loading */}
-          {loading && (
-            <div className="loading-wrap" role="status" aria-live="polite">
-              <div className="spinner" />
-              <p>Fetching live listings from 4 job boards…<br />Broad searches may take 1–3 minutes.</p>
+          {/* Live stream status */}
+          {streaming && (
+            <div className="stream-status" role="status" aria-live="polite">
+              <span className="stream-status-dot" />
+              Searching… <strong>{sourcesChecked}</strong> source{sourcesChecked !== 1 ? 's' : ''} checked
+              {jobs.length > 0 && (
+                <span className="stream-status-count"> · {jobs.length} jobs so far</span>
+              )}
             </div>
           )}
 
-          {/* Error */}
-          {!loading && error && (
-            <div className="state-box is-error" role="alert">
-              <span className="state-icon">⚠️</span>
-              <h3>Something went wrong</h3>
-              <p>{error}</p>
+          {/* Stream error notes (non-blocking) */}
+          {streamErrors.length > 0 && (
+            <div className="source-errors-wrap" role="log" aria-label="Source errors">
+              {streamErrors.map(err => (
+                <span key={err.id} className="source-error-pill" title={err.message}>
+                  ⚠ {err.source}: {err.message.length > 60 ? err.message.slice(0, 57) + '…' : err.message}
+                </span>
+              ))}
             </div>
           )}
 
           {/* Results */}
-          {!loading && !error && jobs !== null && (
+          {searched && (
             <>
-              {jobs.length === 0 ? (
+              {jobs.length === 0 && streamDone ? (
                 <div className="state-box">
                   <span className="state-icon">🔍</span>
                   <h3>No jobs found</h3>
                   <p>
-                    Try different filters — a broader keyword, different location, or remove the
+                    Try different tags — a broader keyword, different location, or remove the
                     job type / work mode filter.
                   </p>
                 </div>
-              ) : (
+              ) : jobs.length > 0 ? (
                 <>
                   {/* Stats bar */}
                   <div className="results-meta" aria-live="polite">
                     <p className="results-count">
-                      Found <strong>{jobs.length}</strong> listing{jobs.length !== 1 ? 's' : ''}
+                      {streaming ? 'Found' : 'Found'} <strong>{jobs.length}</strong> listing{jobs.length !== 1 ? 's' : ''}
+                      {streaming && <span className="results-streaming-indicator"> · streaming</span>}
                     </p>
                     {sites.map(s => (
                       <span key={s} className="site-pill">
@@ -274,7 +519,7 @@ export default function App() {
                       </thead>
                       <tbody>
                         {jobs.map((job, idx) => (
-                          <tr key={idx}>
+                          <tr key={job.job_url || `no-url-${idx}`}>
                             <td>
                               <span className="job-title">{job.title ?? '—'}</span>
                             </td>
@@ -282,7 +527,14 @@ export default function App() {
                               <span className="job-company">{job.company ?? '—'}</span>
                             </td>
                             <td>
-                              <span className="job-location">{job.location ?? '—'}</span>
+                              <span className="job-location">
+                                {job.location ?? '—'}
+                                {job.matched_location && (
+                                  <span className="matched-location-badge">
+                                    {job.matched_location}
+                                  </span>
+                                )}
+                              </span>
                             </td>
                             <td>
                               <span
@@ -335,24 +587,41 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Load More */}
+                  {showLoadMore && (
+                    <div className="load-more-wrap">
+                      <button
+                        id="btn-load-more"
+                        type="button"
+                        className="btn-load-more"
+                        onClick={handleLoadMore}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 5v14M5 12l7 7 7-7" />
+                        </svg>
+                        Load more results
+                      </button>
+                    </div>
+                  )}
                 </>
-              )}
+              ) : null}
             </>
           )}
 
           {/* Initial prompt — before first search */}
-          {!loading && !error && jobs === null && !searched && (
+          {!searched && (
             <div className="state-box">
               <span className="state-icon">💼</span>
               <h3>Ready to search</h3>
-              <p>Enter a role and location above, then click Search Jobs to fetch live postings.</p>
+              <p>Add one or more keyword tags and a location above, then click Search Jobs to fetch live postings.</p>
             </div>
           )}
         </main>
 
         {/* ── Footer ── */}
         <footer className="app-footer">
-          <p>Pipeline · Phase 1.5 · Powered by python-jobspy</p>
+          <p>Pipeline · Phase 2 · Powered by python-jobspy</p>
         </footer>
       </div>
     </div>

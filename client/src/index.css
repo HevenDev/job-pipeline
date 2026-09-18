@@ -116,6 +116,99 @@ body {
   .search-grid { grid-template-columns: 1fr; }
 }
 
+/* ── Tag count hint (next to label) ─────────────────────────── */
+.tag-count-hint {
+  margin-left: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ── Tag chip input wrapper ──────────────────────────────────── */
+.tag-input-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 6px 0.875rem;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: text;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.tag-input-wrap:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(139,92,246,0.15);
+}
+
+.tag-input-wrap.is-maxed {
+  opacity: 0.8;
+  cursor: default;
+}
+
+/* ── Individual tag chip ─────────────────────────────────────── */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(139,92,246,0.18);
+  border: 1px solid rgba(139,92,246,0.4);
+  border-radius: 6px;
+  padding: 2px 6px 2px 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #c4b5fd;
+  white-space: nowrap;
+  animation: chip-pop 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes chip-pop {
+  from { opacity: 0; transform: scale(0.8); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.tag-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(196,181,253,0.6);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+  transition: background var(--transition), color var(--transition);
+}
+
+.tag-chip-remove:hover {
+  background: rgba(139,92,246,0.3);
+  color: #ede9fe;
+}
+
+/* ── Inner text input inside the tag wrapper ─────────────────── */
+.tag-inner-input {
+  flex: 1;
+  min-width: 160px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.95rem;
+  outline: none;
+  padding: 2px 0;
+}
+
+.tag-inner-input::placeholder { color: var(--text-faint); }
+
 .field-group {
   display: flex;
   flex-direction: column;
@@ -269,6 +362,128 @@ body {
 .loading-wrap p {
   color: var(--text-muted);
   font-size: 0.95rem;
+}
+
+/* ── Stream status line ──────────────────────────────────────── */
+.stream-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.stream-status strong {
+  color: var(--accent);
+}
+
+.stream-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+}
+
+.stream-status-count {
+  color: var(--text-faint);
+}
+
+/* ── Streaming indicator in results-count ───────────────────── */
+.results-streaming-indicator {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  animation: fade-in-out 1.5s ease-in-out infinite;
+}
+
+@keyframes fade-in-out {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ── Source error pills ──────────────────────────────────────── */
+.source-errors-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.source-error-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(251,191,36,0.08);
+  border: 1px solid rgba(251,191,36,0.25);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--warning);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Matched location badge (inside location cell) ───────────── */
+.matched-location-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: rgba(139,92,246,0.12);
+  border: 1px solid rgba(139,92,246,0.2);
+  color: var(--accent);
+  vertical-align: middle;
+  letter-spacing: 0.03em;
+}
+
+/* ── Load more button ────────────────────────────────────────── */
+.load-more-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 1.75rem 0 0.5rem;
+}
+
+.btn-load-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid rgba(139,92,246,0.4);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  height: 42px;
+  padding: 0 1.75rem;
+  transition: background var(--transition), border-color var(--transition),
+              transform var(--transition), box-shadow var(--transition);
+}
+
+.btn-load-more:hover {
+  background: rgba(139,92,246,0.1);
+  border-color: rgba(139,92,246,0.65);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(139,92,246,0.2);
+}
+
+.btn-load-more:active {
+  transform: translateY(0);
 }
 
 /* ── Error / Empty ───────────────────────────────────────────── */

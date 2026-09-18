@@ -19,6 +19,7 @@ class JobListing(BaseModel):
     date_posted: Optional[str] = None
     job_url: Optional[str] = None
     site: Optional[str] = None
+    matched_location: Optional[str] = None  # city string that produced this result
 
 
 class SiteStatus(BaseModel):
@@ -34,7 +35,7 @@ class SiteStatus(BaseModel):
 
 
 class JobSearchResponse(BaseModel):
-    """Top-level API response shape — stable contract from Phase 1 onward."""
+    """Top-level API response shape — kept for internal use and tooling."""
 
     jobs: list[JobListing]
     total: int

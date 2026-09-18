@@ -5,6 +5,7 @@ Responsibilities:
   - Execute one jobspy scrape for a given search_term + site list.
   - Normalise the returned DataFrame into a plain list[dict] with only
     the fields defined in KEEP_FIELDS.
+  - Attach a matched_location field to every returned job dict.
   - Track per-site call/return/error counts for source_status telemetry.
   - Never raise — on any exception the call is logged and an empty list
     is returned, so one failing site never aborts the whole orchestration.
@@ -53,12 +54,19 @@ def fetch(
     sites: list[str],
     search_term: str,
     location: str,
+    matched_location: str,
     job_type: Optional[str] = None,
     is_remote: Optional[bool] = None,
     hours_old: int,
     results_wanted: int,
+    offset: int = 0,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Run one scrape_jobs() call and return (jobs, site_status_update).
+
+    ``matched_location`` is the specific city string used for this call
+    (may differ from ``location`` when Glassdoor alias substitution is
+    applied). It is attached to every job dict as ``matched_location``
+    so the frontend can display which city produced each result.
 
     ``site_status_update`` is a dict keyed by site name with keys:
       calls    — always 1 per site in this call
@@ -85,6 +93,7 @@ def fetch(
             hours_old=hours_old,
             results_wanted=results_wanted,
             country_indeed="India",
+            offset=offset,
         )
         if job_type is not None:
             kwargs["job_type"] = job_type
@@ -94,9 +103,10 @@ def fetch(
         jobs_df: pd.DataFrame = scrape_jobs(**kwargs)
     except Exception as exc:
         logger.error(
-            "scrape_jobs() failed | sites=%s search_term=%r: %s",
+            "scrape_jobs() failed | sites=%s search_term=%r location=%r: %s",
             sites,
             search_term,
+            location,
             exc,
         )
         for s in sites:
@@ -105,9 +115,10 @@ def fetch(
 
     if jobs_df is None or jobs_df.empty:
         logger.info(
-            "scrape_jobs() returned 0 rows | sites=%s search_term=%r",
+            "scrape_jobs() returned 0 rows | sites=%s search_term=%r location=%r",
             sites,
             search_term,
+            location,
         )
         return [], status
 
@@ -120,6 +131,7 @@ def fetch(
         record: dict = {}
         for field in available:
             record[field] = _safe_value(getattr(row, field, None))
+        record["matched_location"] = matched_location
         jobs.append(record)
 
     # Update per-site returned counts
@@ -141,9 +153,10 @@ def fetch(
             status[sites[0]]["returned"] = len(jobs)
 
     logger.info(
-        "scrape_jobs() OK | sites=%s search_term=%r returned=%d",
+        "scrape_jobs() OK | sites=%s search_term=%r location=%r returned=%d",
         sites,
         search_term,
+        location,
         len(jobs),
     )
     return jobs, status
