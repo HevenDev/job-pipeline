@@ -1,6 +1,8 @@
-import { useState, useRef, useCallback, type KeyboardEvent, type FormEvent } from 'react'
+import { useState, useRef, useCallback, useEffect, type KeyboardEvent, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import '../App.css'
-import type { Job } from '../types'
+import type { Job, SearchHistory } from '../types'
+import { formatDate } from '../utils'
 import JobsTable from '../components/JobsTable'
 
 interface BatchData {
@@ -27,6 +29,20 @@ const MAX_TAGS = 6
 const MAX_LOCATIONS = 5
 
 export default function SearchPage() {
+  // Recent searches state
+  const [recentSearches, setRecentSearches] = useState<SearchHistory[]>([])
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/history?limit=3`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.history) {
+          setRecentSearches(data.history)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
   // Tag input state
   const [tags, setTags] = useState<string[]>([])
   const [tagInput, setTagInput] = useState('')
@@ -248,7 +264,7 @@ export default function SearchPage() {
             <div className="search-card">
               <div className="search-grid">
                 {/* Tag / Keyword Input */}
-                <div className="field-group" style={{ gridColumn: '1 / -1' }}>
+                <div className="field-group col-span-full">
                   <label htmlFor="tag-input-field">
                     Role / Keywords
                     <span className="tag-count-hint">
@@ -292,7 +308,7 @@ export default function SearchPage() {
                 </div>
 
                 {/* Location Tag Input */}
-                <div className="field-group" style={{ gridColumn: '1 / -1' }}>
+                <div className="field-group col-span-full">
                   <label htmlFor="location-input-field">
                     Location
                     <span className="tag-count-hint">
@@ -378,8 +394,7 @@ export default function SearchPage() {
                   {streaming ? (
                     <>
                       <span
-                        className="spinner"
-                        style={{ width: 16, height: 16, borderWidth: 2 }}
+                        className="spinner w-4 h-4 border-2"
                       />
                       Searching…
                     </>
@@ -484,11 +499,51 @@ export default function SearchPage() {
 
           {/* Initial prompt — before first search */}
           {!searched && (
-            <div className="state-box">
-              <span className="state-icon">💼</span>
-              <h3>Ready to search</h3>
-              <p>Add one or more keyword tags and a location above, then click Search Jobs to fetch live postings.</p>
-            </div>
+            <>
+              <header className="app-header mb-8 text-center">
+                <div className="badge mx-auto mb-4">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                    <circle cx="5" cy="5" r="5" />
+                  </svg>
+                  Live · Phase 2
+                </div>
+                <h1 className="text-4xl font-extrabold mb-2 tracking-tight">Pipeline</h1>
+                <p className="text-[#888]">Search real-time job postings from LinkedIn, Indeed, Naukri &amp; Glassdoor</p>
+              </header>
+
+              <div className="state-box">
+                <span className="state-icon">💼</span>
+                <h3>Ready to search</h3>
+                <p>Add one or more keyword tags and a location above, then click Search Jobs to fetch live postings.</p>
+              </div>
+              
+              {recentSearches.length > 0 && (
+                <div className="mt-8">
+                  <h3 className="mb-4 text-[var(--fg)] text-lg font-semibold">Recent Searches</h3>
+                  <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
+                    {recentSearches.map(h => (
+                      <Link 
+                        to={`/history?role=${h.roles.join(',')}&location=${h.locations.join(',')}`} 
+                        key={h.search_id} 
+                        className="search-card hover-lift no-underline text-inherit p-5 block border border-[#333] rounded-lg"
+                      >
+                        <div className="flex justify-between mb-3 items-start">
+                          <strong className="text-[1.05rem] leading-snug">{h.roles.join(', ') || 'Any Role'}</strong>
+                        </div>
+                        <div className="text-sm text-[#aaa] mb-5 flex items-center gap-1.5">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                          {h.locations.join(', ') || 'Any Location'}
+                        </div>
+                        <div className="flex justify-between text-[0.85rem] border-t border-[#222] pt-3">
+                          <span className="text-[#888]">{formatDate(h.started_at)}</span>
+                          <span className="text-[var(--success)] font-medium">{h.total_matched} matches</span>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </main>
 

@@ -1,7 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom'
 import SearchPage from './pages/SearchPage'
 import HistoryPage from './pages/HistoryPage'
-import HistoryDetailPage from './pages/HistoryDetailPage'
 import './App.css'
 
 function Layout() {
@@ -9,32 +8,33 @@ function Layout() {
   
   return (
     <div className="app-wrapper">
-      <div className="container">
-        <header className="app-header" style={{ position: 'relative' }}>
-          <div className="badge">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-              <circle cx="5" cy="5" r="5" />
+      {/* Proper Modern Navbar */}
+      <nav className="global-nav">
+        <div className="nav-container">
+          <Link to="/" className="nav-logo">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
             </svg>
-            Live · Phase 2
+            Job Pipeline <span className="brand-author">by Hevendev</span>
+          </Link>
+          
+          <div className="nav-links">
+            <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}>Search</Link>
+            <Link to="/history" className={`nav-link ${location.pathname.startsWith('/history') ? 'active' : ''}`}>Previous Search</Link>
           </div>
-          
-          <nav className="app-nav" style={{ position: 'absolute', right: 0, top: 0, display: 'flex', gap: '1rem' }}>
-            <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} style={{ fontWeight: location.pathname === '/' ? 'bold' : 'normal', textDecoration: 'none', color: 'inherit' }}>Search</Link>
-            <Link to="/history" className={`nav-link ${location.pathname.startsWith('/history') ? 'active' : ''}`} style={{ fontWeight: location.pathname.startsWith('/history') ? 'bold' : 'normal', textDecoration: 'none', color: 'inherit' }}>Previous Search</Link>
-          </nav>
-          
-          <h1>Pipeline</h1>
-          <p>Search real-time job postings from LinkedIn, Indeed, Naukri &amp; Glassdoor</p>
-        </header>
-        
+        </div>
+      </nav>
+
+      <div className="container mt-20">
         <Routes>
           <Route path="/" element={<SearchPage />} />
           <Route path="/history" element={<HistoryPage />} />
-          <Route path="/history/:id" element={<HistoryDetailPage />} />
         </Routes>
         
         <footer className="app-footer">
-          <p>Pipeline · Phase 2 · Powered by python-jobspy</p>
+          <p>Job Pipeline · Phase 2</p>
         </footer>
       </div>
     </div>

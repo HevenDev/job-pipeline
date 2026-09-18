@@ -27,3 +27,10 @@ export interface SearchHistory {
   duplicate_job_count: number
   cache_hit: boolean
 }
+
+export interface PaginatedJobsResponse {
+  data: Job[]
+  total: number
+  page: number
+  limit: number
+}

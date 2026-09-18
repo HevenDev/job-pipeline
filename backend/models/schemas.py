@@ -36,6 +36,13 @@ class JobSearchResponse(BaseModel):
     total: int
     source_status: dict[str, SiteStatus] = {}
 
+class PaginatedJobsResponse(BaseModel):
+    """API response for historical paginated jobs."""
+    data: list[JobListing]
+    total: int
+    page: int
+    limit: int
+
 # ── Database Models ─────────────────────────────────────────────────────────
 
 class JobDocument(BaseModel):

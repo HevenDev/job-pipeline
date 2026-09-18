@@ -1,195 +1,206 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import type { SearchHistory } from '../types'
-import { formatDate } from '../utils'
+import { useSearchParams } from 'react-router-dom'
+import type { Job, PaginatedJobsResponse } from '../types'
+import JobsTable from '../components/JobsTable'
+import { DatePicker } from '../components/DatePicker'
+import { MultiSelect } from '../components/MultiSelect'
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
 export default function HistoryPage() {
-  const [history, setHistory] = useState<SearchHistory[]>([])
+  const [searchParams, setSearchParams] = useSearchParams()
+  
+  // Tag cloud state
+  const [availableRoles, setAvailableRoles] = useState<string[]>([])
+  const [availableLocations, setAvailableLocations] = useState<string[]>([])
+  
+  // Filter state
+  const [roleFilter, setRoleFilter] = useState<string[]>(
+    searchParams.get('role') ? searchParams.get('role')!.split(',') : []
+  )
+  const [locationFilter, setLocationFilter] = useState<string[]>(
+    searchParams.get('location') ? searchParams.get('location')!.split(',') : []
+  )
+  const [startDate, setStartDate] = useState<Date | undefined>(
+    searchParams.get('start_date') ? new Date(searchParams.get('start_date')!) : undefined
+  )
+  const [endDate, setEndDate] = useState<Date | undefined>(
+    searchParams.get('end_date') ? new Date(searchParams.get('end_date')!) : undefined
+  )
+  
+  // Data state
+  const [jobs, setJobs] = useState<Job[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [limit, setLimit] = useState(25)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Filters
-  const [roleFilter, setRoleFilter] = useState('')
-  const [locationFilter, setLocationFilter] = useState('')
-  const [jobType, setJobType] = useState('')
-  const [sourceFilter, setSourceFilter] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
-
-  // Debounce string filters
-  const [debouncedRole, setDebouncedRole] = useState('')
-  const [debouncedLocation, setDebouncedLocation] = useState('')
-
+  // Fetch unique tags for the cloud
   useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedRole(roleFilter)
-      setDebouncedLocation(locationFilter)
-    }, 400)
-    return () => clearTimeout(t)
-  }, [roleFilter, locationFilter])
+    fetch(`${API_BASE_URL}/api/history/tags`)
+      .then(res => res.json())
+      .then(data => {
+        setAvailableRoles(data.roles || [])
+        setAvailableLocations(data.locations || [])
+      })
+      .catch(console.error)
+  }, [])
 
+  // Fetch paginated jobs when filters change
   useEffect(() => {
     setLoading(true)
     const params = new URLSearchParams()
-    if (debouncedRole) params.append('role', debouncedRole)
-    if (debouncedLocation) params.append('location', debouncedLocation)
-    if (jobType) params.append('job_type', jobType)
-    if (sourceFilter) params.append('source', sourceFilter)
-    if (dateFrom) params.append('start_date', new Date(dateFrom).toISOString())
+    params.append('page', page.toString())
+    params.append('limit', limit.toString())
+    if (roleFilter.length > 0) params.append('role', roleFilter.join(','))
+    if (locationFilter.length > 0) params.append('location', locationFilter.join(','))
+    if (startDate) params.append('start_date', startDate.toISOString())
+    if (endDate) params.append('end_date', endDate.toISOString())
     
-    let toDateStr = ''
-    if (dateTo) {
-      // End of day
-      const d = new Date(dateTo)
-      d.setHours(23, 59, 59, 999)
-      toDateStr = d.toISOString()
-      params.append('end_date', toDateStr)
-    }
+    // Sync to URL
+    setSearchParams(params, { replace: true })
 
-    fetch(`${API_BASE_URL}/api/history?${params.toString()}`)
+    fetch(`${API_BASE_URL}/api/history/all_jobs?${params.toString()}`)
       .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch history')
-        return res.json()
+        if (!res.ok) throw new Error('Failed to fetch jobs')
+        return res.json() as Promise<PaginatedJobsResponse>
       })
       .then(data => {
-        setHistory(data)
+        setJobs(data.data)
+        setTotal(data.total)
         setError(null)
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
-  }, [debouncedRole, debouncedLocation, jobType, sourceFilter, dateFrom, dateTo])
+  }, [roleFilter, locationFilter, startDate, endDate, page, limit, setSearchParams])
+
+  const totalPages = Math.ceil(total / limit)
 
   return (
     <main>
-      <section aria-label="History filters">
-        <div className="search-card">
-          <div className="search-grid">
+      <section aria-label="History search and filters" className="mb-8">
+        <h2 className="mb-6 text-2xl font-bold">Master Jobs Database</h2>
+        
+        <div className="search-card p-6">
+          {/* Main Search Inputs */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
             <div className="field-group">
-              <label>Role / Keyword</label>
-              <input
-                type="text"
-                className="tag-inner-input"
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #333' }}
-                placeholder="Filter by role..."
-                value={roleFilter}
-                onChange={e => setRoleFilter(e.target.value)}
+              <label className="font-semibold">Title or Role</label>
+              <MultiSelect
+                options={availableRoles}
+                selected={roleFilter}
+                onChange={val => { setRoleFilter(val); setPage(1); }}
+                placeholder="Select roles..."
               />
             </div>
 
             <div className="field-group">
-              <label>Location</label>
-              <input
-                type="text"
-                className="tag-inner-input"
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #333' }}
-                placeholder="Filter by location..."
-                value={locationFilter}
-                onChange={e => setLocationFilter(e.target.value)}
+              <label className="font-semibold">Location</label>
+              <MultiSelect
+                options={availableLocations}
+                selected={locationFilter}
+                onChange={val => { setLocationFilter(val); setPage(1); }}
+                placeholder="Select locations..."
               />
             </div>
-
-            <div className="field-group">
-              <label>Job Type</label>
-              <select
-                value={jobType}
-                onChange={e => setJobType(e.target.value)}
-              >
-                <option value="">Any</option>
-                <option value="fulltime">Full-time</option>
-                <option value="parttime">Part-time</option>
-                <option value="internship">Internship</option>
-                <option value="contract">Contract</option>
-              </select>
-            </div>
-
-            <div className="field-group">
-              <label>Source</label>
-              <select
-                value={sourceFilter}
-                onChange={e => setSourceFilter(e.target.value)}
-              >
-                <option value="">Any</option>
-                <option value="live_stream">Live Stream</option>
-                <option value="seed_import">Seed Import</option>
-              </select>
-            </div>
-            
-            <div className="field-group">
-              <label>From Date</label>
-              <input
-                type="date"
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #333', background: 'var(--bg)', color: 'var(--fg)' }}
-                value={dateFrom}
-                onChange={e => setDateFrom(e.target.value)}
+          </div>
+          
+          {/* Shadcn Date Pickers */}
+          <div className="flex flex-wrap items-end gap-4 border-t border-[#333] pt-6">
+            <div className="field-group flex-1 min-w-[200px]">
+              <label className="text-[0.9rem] text-[#ccc]">Found After</label>
+              <DatePicker 
+                date={startDate} 
+                setDate={d => { setStartDate(d); setPage(1); }} 
+                placeholder="Start date" 
               />
             </div>
             
-            <div className="field-group">
-              <label>To Date</label>
-              <input
-                type="date"
-                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #333', background: 'var(--bg)', color: 'var(--fg)' }}
-                value={dateTo}
-                onChange={e => setDateTo(e.target.value)}
+            <div className="field-group flex-1 min-w-[200px]">
+              <label className="text-[0.9rem] text-[#ccc]">Found Before</label>
+              <DatePicker 
+                date={endDate} 
+                setDate={d => { setEndDate(d); setPage(1); }} 
+                placeholder="End date" 
               />
+            </div>
+            
+            <div className="flex-1 flex justify-end">
+               <button 
+                  className="btn-view h-[44px]"
+                  onClick={() => {
+                    setRoleFilter([]);
+                    setLocationFilter([]);
+                    setStartDate(undefined);
+                    setEndDate(undefined);
+                    setPage(1);
+                  }}
+               >
+                 Clear Filters
+               </button>
             </div>
           </div>
         </div>
       </section>
 
-      <section style={{ marginTop: '2rem' }}>
+      <section>
         {error && <div className="state-box"><h3>Error</h3><p>{error}</p></div>}
         
-        {loading && !history.length && <div className="state-box">Loading history...</div>}
-
-        {!loading && history.length === 0 && !error && (
+        {loading && jobs.length === 0 && <div className="state-box">Loading database...</div>}
+        
+        {!loading && jobs.length === 0 && !error && (
           <div className="state-box">
-            <h3>No history found</h3>
-            <p>Try adjusting your filters.</p>
+            <span className="state-icon">📭</span>
+            <h3>No jobs found</h3>
+            <p>Try adjusting your filters or date range.</p>
           </div>
         )}
-
-        {history.length > 0 && (
-          <div className="jobs-table-wrap">
-            <table className="jobs-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Roles</th>
-                  <th>Locations</th>
-                  <th>Jobs (New)</th>
-                  <th>Source</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map(h => (
-                  <tr key={h.search_id}>
-                    <td>{formatDate(h.started_at)}</td>
-                    <td>{h.roles.join(', ')}</td>
-                    <td>{h.locations.join(', ')}</td>
-                    <td>
-                      {h.total_matched} 
-                      {h.new_job_count > 0 && <span style={{ color: 'var(--success)', marginLeft: '4px' }}>(+{h.new_job_count})</span>}
-                    </td>
-                    <td>
-                      <span className={`site-badge ${h.source === 'seed_import' ? 'naukri' : 'linkedin'}`}>
-                        {h.source === 'seed_import' ? 'Seeded' : 'Live'}
-                      </span>
-                      {h.cache_hit && <span className="site-badge indeed" style={{ marginLeft: '4px' }}>Cached</span>}
-                    </td>
-                    <td>
-                      <Link to={`/history/${h.search_id}`} className="btn-view">
-                        View Jobs
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        
+        {jobs.length > 0 && (
+          <>
+            <div className="results-meta flex justify-between items-center" aria-live="polite">
+              <p className="results-count">
+                Showing <strong>{jobs.length}</strong> of <strong>{total}</strong> jobs from your history.
+              </p>
+              
+              <div className="flex items-center gap-4">
+                <select 
+                  value={limit} 
+                  onChange={e => {
+                    setLimit(Number(e.target.value))
+                    setPage(1)
+                  }}
+                  disabled={loading}
+                  className="bg-[var(--bg-card)] text-[var(--fg)] border border-[var(--border)] p-1 rounded"
+                >
+                  <option value="25">25 per page</option>
+                  <option value="50">50 per page</option>
+                  <option value="75">75 per page</option>
+                  <option value="100">100 per page</option>
+                </select>
+                
+                <div className="flex gap-2">
+                  <button 
+                    className="btn-view"
+                    disabled={page === 1 || loading}
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                  >
+                    Prev
+                  </button>
+                  <span className="self-center text-sm">Page {page} of {totalPages || 1}</span>
+                  <button 
+                    className="btn-view"
+                    disabled={page >= totalPages || loading}
+                    onClick={() => setPage(p => p + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            </div>
+            <JobsTable jobs={jobs} />
+          </>
         )}
       </section>
     </main>
