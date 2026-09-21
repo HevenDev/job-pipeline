@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: job-pipeline
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: MONGO_URI
+        sync: false # Enter your MongoDB Atlas connection string in Render Dashboard
+      - key: MONGO_DB_NAME
+        value: Job-pipeline
+      - key: REDIS_URL
+        value: "" # Optional (Render Redis, Upstash, or leave blank to use in-memory fallback)
+      - key: PYTHONUNBUFFERED
+        value: "1"

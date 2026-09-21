@@ -1,0 +1,17 @@
+**/.git
+**/.gitignore
+**/node_modules
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.idea
+**/.vscode
+client/dist
+.env
+backend/.env
+client/.env
+docker-compose*.yml
+README.md
+docs/
